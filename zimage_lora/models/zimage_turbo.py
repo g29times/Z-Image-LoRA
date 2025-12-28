@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
+import inspect
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -211,12 +212,37 @@ class ZImageTurboLightningModule(pl.LightningModule):
 
         noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
 
-        # 4) predict noise (transformer forward signature may vary; handle common cases)
-        model_out = self.transformer(
-            noisy_latents,
-            timesteps,
-            encoder_hidden_states=prompt_embeds,
-        )
+        # 4) predict noise (transformer forward signature varies across implementations)
+        fwd = self.transformer.forward
+        sig = None
+        try:
+            sig = inspect.signature(fwd)
+        except Exception:
+            sig = None
+
+        kwargs: Dict[str, Any] = {}
+        if sig is not None:
+            params = sig.parameters
+            if "encoder_hidden_states" in params:
+                kwargs["encoder_hidden_states"] = prompt_embeds
+            elif "prompt_embeds" in params:
+                kwargs["prompt_embeds"] = prompt_embeds
+            elif "context" in params:
+                kwargs["context"] = prompt_embeds
+            elif "text_embeds" in params:
+                kwargs["text_embeds"] = prompt_embeds
+
+        # Try common call patterns
+        try:
+            model_out = self.transformer(noisy_latents, timesteps, **kwargs)
+        except TypeError:
+            # Some models use different arg names for timestep
+            if sig is not None and "timestep" in sig.parameters:
+                model_out = self.transformer(noisy_latents, timestep=timesteps, **kwargs)
+            elif sig is not None and "timesteps" in sig.parameters:
+                model_out = self.transformer(noisy_latents, timesteps=timesteps, **kwargs)
+            else:
+                model_out = self.transformer(noisy_latents, timesteps)
         if isinstance(model_out, tuple):
             pred = model_out[0]
         elif hasattr(model_out, "sample"):
