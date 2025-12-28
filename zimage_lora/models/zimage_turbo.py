@@ -146,7 +146,7 @@ class ZImageTurboLightningModule(pl.LightningModule):
         # Register modules so Lightning sees parameters
         self.pipe.transformer = self.transformer
 
-    def _encode_prompt(self, captions: list[str]) -> torch.Tensor:
+    def _encode_prompt(self, captions: list[str]) -> Dict[str, torch.Tensor]:
         # Prefer pipeline helper if present
         if hasattr(self.pipe, "encode_prompt"):
             # Different diffusers versions/pipelines expose different signatures.
@@ -159,9 +159,28 @@ class ZImageTurboLightningModule(pl.LightningModule):
             ):
                 try:
                     out = self.pipe.encode_prompt(captions, **kwargs)
-                    if isinstance(out, tuple):
-                        return out[0]
-                    return out
+                    # Some pipelines return dict-like features (e.g. cap_feats).
+                    if isinstance(out, dict):
+                        cap_feats = out.get("cap_feats")
+                        if isinstance(cap_feats, torch.Tensor):
+                            res: Dict[str, torch.Tensor] = {"cap_feats": cap_feats}
+                            for k in ("prompt_embeds", "text_embeds", "encoder_hidden_states", "context"):
+                                v = out.get(k)
+                                if isinstance(v, torch.Tensor):
+                                    res["prompt_embeds"] = v
+                                    break
+                            if "prompt_embeds" not in res:
+                                res["prompt_embeds"] = cap_feats
+                            return res
+
+                    # Common: tuple(prompt_embeds, negative_prompt_embeds, ...)
+                    if isinstance(out, tuple) and len(out) > 0 and isinstance(out[0], torch.Tensor):
+                        t = out[0]
+                        return {"cap_feats": t, "prompt_embeds": t}
+
+                    # Common: a tensor
+                    if isinstance(out, torch.Tensor):
+                        return {"cap_feats": out, "prompt_embeds": out}
                 except TypeError:
                     continue
 
@@ -174,10 +193,14 @@ class ZImageTurboLightningModule(pl.LightningModule):
         tok = {k: v.to(self.device) for k, v in tok.items()}
         enc = self.text_encoder(**tok)
         if isinstance(enc, tuple):
-            return enc[0]
-        if hasattr(enc, "last_hidden_state"):
-            return enc.last_hidden_state
-        return enc
+            t = enc[0]
+        elif hasattr(enc, "last_hidden_state"):
+            t = enc.last_hidden_state
+        else:
+            t = enc
+        if not isinstance(t, torch.Tensor):
+            raise RuntimeError("text_encoder output is not a torch.Tensor")
+        return {"cap_feats": t, "prompt_embeds": t}
 
     @torch.no_grad()
     def _encode_images_to_latents(self, pixel_values: torch.Tensor) -> torch.Tensor:
@@ -199,7 +222,9 @@ class ZImageTurboLightningModule(pl.LightningModule):
         captions = batch["captions"]
 
         # 1) prompt embeds
-        prompt_embeds = self._encode_prompt(captions)
+        text_feats = self._encode_prompt(captions)
+        cap_feats = text_feats["cap_feats"]
+        prompt_embeds = text_feats.get("prompt_embeds", cap_feats)
 
         # 2) latents
         latents = self._encode_images_to_latents(pixel_values)
@@ -223,6 +248,8 @@ class ZImageTurboLightningModule(pl.LightningModule):
         kwargs: Dict[str, Any] = {}
         if sig is not None:
             params = sig.parameters
+            if "cap_feats" in params:
+                kwargs["cap_feats"] = cap_feats
             if "encoder_hidden_states" in params:
                 kwargs["encoder_hidden_states"] = prompt_embeds
             elif "prompt_embeds" in params:
