@@ -5,6 +5,8 @@ model:
     source: huggingface
     precision: fp16
     variant: turbo
+    low_cpu_mem_usage: true
+    cpu_offload: true
   lora:
     enable: true
     rank: 16
