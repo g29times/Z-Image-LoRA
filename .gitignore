@@ -6,3 +6,4 @@
 .windsurf-server
 data/
 __pycache__/
+artifacts/
