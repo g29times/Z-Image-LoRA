@@ -23,11 +23,13 @@ class ZImageTurboLightningModule(pl.LightningModule):
         self.text_encoder = None
         self.tokenizer = None
         self.scheduler = None
+        self.noise_scheduler = None
 
         self._init_pipeline_and_lora()
 
     def _init_pipeline_and_lora(self) -> None:
         from diffusers import ZImagePipeline
+        from diffusers import DDPMScheduler
 
         name = str(self.base_cfg.get("name", "Tongyi-MAI/Z-Image-Turbo"))
         precision = str(self.base_cfg.get("precision", "bf16")).lower()
@@ -67,6 +69,13 @@ class ZImageTurboLightningModule(pl.LightningModule):
 
         if self.transformer is None or self.vae is None or self.text_encoder is None or self.tokenizer is None or self.scheduler is None:
             raise RuntimeError("ZImagePipeline is missing required components (transformer/vae/text_encoder/tokenizer/scheduler)")
+
+        # Training needs a scheduler that supports add_noise(). Some inference schedulers (e.g.
+        # FlowMatchEulerDiscreteScheduler) don't implement it.
+        if hasattr(self.scheduler, "add_noise"):
+            self.noise_scheduler = self.scheduler
+        else:
+            self.noise_scheduler = DDPMScheduler(num_train_timesteps=1000)
 
         # LoRA injection (PEFT) - only for transformer by default
         if bool(self.lora_cfg.get("enable", True)):
@@ -197,15 +206,10 @@ class ZImageTurboLightningModule(pl.LightningModule):
         # 3) sample noise + timestep
         noise = torch.randn_like(latents)
         bsz = latents.shape[0]
-        timesteps = torch.randint(
-            0,
-            int(getattr(self.scheduler.config, "num_train_timesteps", 1000)),
-            (bsz,),
-            device=self.device,
-            dtype=torch.long,
-        )
+        num_train_timesteps = int(getattr(getattr(self.noise_scheduler, "config", None), "num_train_timesteps", 1000))
+        timesteps = torch.randint(0, num_train_timesteps, (bsz,), device=self.device, dtype=torch.long)
 
-        noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
+        noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
 
         # 4) predict noise (transformer forward signature may vary; handle common cases)
         model_out = self.transformer(
