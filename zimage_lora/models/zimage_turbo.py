@@ -105,8 +105,13 @@ class ZImageTurboLightningModule(pl.LightningModule):
             self.transformer = get_peft_model(self.transformer, lora)
 
         # Freeze everything except trainable params (LoRA)
-        for p in self.pipe.parameters():
-            p.requires_grad = False
+        # Note: Diffusers pipelines are not guaranteed to behave like nn.Module for .parameters().
+        for component in (self.vae, self.text_encoder, self.transformer):
+            if component is None:
+                continue
+            for p in component.parameters():
+                p.requires_grad = False
+
         # PEFT marks LoRA weights trainable; explicitly enforce:
         for n, p in self.transformer.named_parameters():
             if "lora" in n.lower():
