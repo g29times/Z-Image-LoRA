@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Tuple
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
@@ -60,18 +61,39 @@ class ZImageTurboLightningModule(pl.LightningModule):
             except Exception as e:
                 raise RuntimeError("peft is required for LoRA training") from e
 
-            target_modules = self.lora_cfg.get("target_modules") or [
-                "to_q",
-                "to_k",
-                "to_v",
-                "to_out",
-            ]
+            target_modules = self.lora_cfg.get("target_modules") or ["to_q", "to_k", "to_v", "to_out"]
 
-            # DESIGN.md uses dotted names like attention.to_q; PEFT expects module name fragments.
-            cleaned = []
-            for m in target_modules:
-                m = str(m)
-                cleaned.append(m.split(".")[-1])
+            # DESIGN.md uses dotted names like attention.to_q. In Z-Image, these sometimes point to
+            # container modules (e.g. ModuleList([Linear, Dropout])), which PEFT can't target.
+            # Here we expand requested targets into leaf module names that are PEFT-supported.
+            supported_types = (nn.Linear, nn.Embedding, nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.MultiheadAttention)
+            try:
+                from transformers.pytorch_utils import Conv1D  # type: ignore
+
+                supported_types = supported_types + (Conv1D,)
+            except Exception:
+                pass
+
+            requested: list[str] = [str(m) for m in target_modules]
+            expanded: list[str] = []
+            for name, module in self.transformer.named_modules():
+                if not isinstance(module, supported_types):
+                    continue
+                for req in requested:
+                    req = req.strip()
+                    if not req:
+                        continue
+                    # Match either full dotted path prefix or last-token fragment.
+                    last = req.split(".")[-1]
+                    if name == req or name.startswith(req + ".") or name.endswith("." + last) or name == last:
+                        expanded.append(name)
+                        break
+
+            # If we couldn't expand (model structure differs), fall back to last-token fragments.
+            if expanded:
+                cleaned = sorted(set(expanded))
+            else:
+                cleaned = [m.split(".")[-1] for m in requested]
 
             lora = LoraConfig(
                 r=int(self.lora_cfg.get("rank", 16)),
