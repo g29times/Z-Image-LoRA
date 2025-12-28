@@ -139,16 +139,21 @@ class ZImageTurboLightningModule(pl.LightningModule):
     def _encode_prompt(self, captions: list[str]) -> torch.Tensor:
         # Prefer pipeline helper if present
         if hasattr(self.pipe, "encode_prompt"):
-            out = self.pipe.encode_prompt(
-                captions,
-                device=self.device,
-                num_images_per_prompt=1,
-                do_classifier_free_guidance=False,
-            )
-            # encode_prompt may return (prompt_embeds, negative_prompt_embeds)
-            if isinstance(out, tuple):
-                return out[0]
-            return out
+            # Different diffusers versions/pipelines expose different signatures.
+            # Try a few patterns, then fall back to manual tokenization.
+            for kwargs in (
+                {"device": self.device, "num_images_per_prompt": 1, "do_classifier_free_guidance": False},
+                {"device": self.device, "do_classifier_free_guidance": False},
+                {"device": self.device},
+                {},
+            ):
+                try:
+                    out = self.pipe.encode_prompt(captions, **kwargs)
+                    if isinstance(out, tuple):
+                        return out[0]
+                    return out
+                except TypeError:
+                    continue
 
         tok = self.tokenizer(
             captions,
