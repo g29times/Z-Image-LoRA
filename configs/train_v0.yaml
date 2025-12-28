@@ -1,0 +1,74 @@
+model:
+  impl: zimage_turbo
+  base:
+    name: Tongyi-MAI/Z-Image-Turbo
+    source: huggingface
+    precision: fp16
+    variant: turbo
+  lora:
+    enable: true
+    rank: 16
+    alpha: 16
+    dropout: 0.0
+    target_modules:
+      - attention.to_q
+      - attention.to_k
+      - attention.to_v
+      - attention.to_out
+
+dataset:
+  type: image_only_with_caption
+  data_dir: ./data
+  resolution: 1024
+  center_crop: true
+  caption:
+    strategy: filename_or_txt
+    trigger_token: "<zstyle>"
+  repeats: 10
+  shuffle: true
+  augment:
+    horizontal_flip: true
+    color_jitter: false
+
+training:
+  backend: lightning
+  seed: 42
+  num_workers: 4
+  batch_size: 1
+  gradient_accumulation: 4
+  max_steps: 2000
+  warmup_steps: 100
+  learning_rate: 1e-4
+  scheduler: cosine
+  optimizer:
+    type: adamw
+    use_8bit: true
+  mixed_precision: fp16
+  gradient_checkpointing: true
+  log_every_n_steps: 10
+  val_check_interval: 0
+
+job:
+  id: ""
+  type: async
+  timeout_hours: 6
+  retry:
+    max_retries: 1
+  resources:
+    gpu: 1
+    min_vram_gb: 24
+  logging:
+    level: info
+
+output:
+  format: safetensors
+  registry:
+    type: local
+    path: ./artifacts/lora
+  naming:
+    pattern: "{job_id}_{style_name}_v0"
+  style_name: zstyle
+  save:
+    lora_weights: true
+    config: true
+    training_meta: true
