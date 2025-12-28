@@ -38,11 +38,25 @@ class ZImageTurboLightningModule(pl.LightningModule):
         else:
             torch_dtype = torch.float32
 
+        # Loading can be CPU-RAM heavy; default to low_cpu_mem_usage=True unless explicitly disabled.
+        low_cpu_mem_usage = bool(self.base_cfg.get("low_cpu_mem_usage", True))
         self.pipe = ZImagePipeline.from_pretrained(
             name,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=bool(self.base_cfg.get("low_cpu_mem_usage", False)),
+            dtype=torch_dtype,
+            low_cpu_mem_usage=low_cpu_mem_usage,
         )
+
+        # Optional attention backend & offload (helps on low VRAM / low RAM machines)
+        attn_backend = self.base_cfg.get("attention_backend")
+        if attn_backend and hasattr(self.pipe, "transformer") and hasattr(self.pipe.transformer, "set_attention_backend"):
+            self.pipe.transformer.set_attention_backend(attn_backend)
+
+        cpu_offload = bool(self.base_cfg.get("cpu_offload", False))
+        if cpu_offload and hasattr(self.pipe, "enable_model_cpu_offload"):
+            self.pipe.enable_model_cpu_offload()
+        else:
+            # Keep pipeline on GPU for training
+            self.pipe.to("cuda")
 
         # components
         self.transformer = getattr(self.pipe, "transformer", None)
