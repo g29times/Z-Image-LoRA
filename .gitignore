@@ -1,1 +1,8 @@
-py
+.cursor-server
+.idea/
+.lightning_studio/
+.vscode-server
+.vscode/
+.windsurf-server
+data/
+__pycache__/
