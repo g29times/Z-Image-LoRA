@@ -8,6 +8,40 @@ import uuid
 import yaml
 
 
+def _as_int(v: Any, name: str) -> int:
+    if isinstance(v, bool):
+        raise ValueError(f"{name} must be int")
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            raise ValueError(f"{name} must be int")
+        try:
+            return int(float(s))
+        except Exception as e:
+            raise ValueError(f"{name} must be int") from e
+    raise ValueError(f"{name} must be int")
+
+
+def _as_float(v: Any, name: str) -> float:
+    if isinstance(v, bool):
+        raise ValueError(f"{name} must be float")
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            raise ValueError(f"{name} must be float")
+        try:
+            return float(s)
+        except Exception as e:
+            raise ValueError(f"{name} must be float") from e
+    raise ValueError(f"{name} must be float")
+
+
 @dataclass
 class Config:
     raw: Dict[str, Any]
@@ -73,13 +107,36 @@ def validate_config(cfg: Config) -> None:
     if tr.get("backend") != "lightning":
         raise ValueError("training.backend must be lightning")
 
-    bs = tr.get("batch_size", 1)
-    if not isinstance(bs, int) or bs <= 0:
+    # Normalize numeric fields (YAML may parse scientific notation as string depending on quoting)
+    bs = _as_int(tr.get("batch_size", 1), "training.batch_size")
+    if bs <= 0:
         raise ValueError("training.batch_size must be positive int")
+    tr["batch_size"] = bs
 
-    lr = tr.get("learning_rate", 1e-4)
-    if not isinstance(lr, (int, float)) or lr <= 0:
+    ga = _as_int(tr.get("gradient_accumulation", 1), "training.gradient_accumulation")
+    if ga <= 0:
+        raise ValueError("training.gradient_accumulation must be positive int")
+    tr["gradient_accumulation"] = ga
+
+    ms = _as_int(tr.get("max_steps", 2000), "training.max_steps")
+    if ms <= 0:
+        raise ValueError("training.max_steps must be positive int")
+    tr["max_steps"] = ms
+
+    ws = _as_int(tr.get("warmup_steps", 0), "training.warmup_steps")
+    if ws < 0:
+        raise ValueError("training.warmup_steps must be >= 0")
+    tr["warmup_steps"] = ws
+
+    nw = _as_int(tr.get("num_workers", 0), "training.num_workers")
+    if nw < 0:
+        raise ValueError("training.num_workers must be >= 0")
+    tr["num_workers"] = nw
+
+    lr = _as_float(tr.get("learning_rate", 1e-4), "training.learning_rate")
+    if lr <= 0:
         raise ValueError("training.learning_rate must be positive")
+    tr["learning_rate"] = lr
 
     out = cfg.output
     reg = out.get("registry", {})
