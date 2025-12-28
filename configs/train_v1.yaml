@@ -3,12 +3,12 @@ model:
   base:
     name: Tongyi-MAI/Z-Image-Turbo
     source: huggingface
-    precision: fp16
+    precision: bf16
     variant: turbo
   lora:
     enable: true
-    rank: 16
-    alpha: 16
+    rank: 64
+    alpha: 64
     dropout: 0.0
     target_modules:
       - attention.to_q
@@ -36,15 +36,15 @@ training:
   num_workers: 4
   batch_size: 1
   gradient_accumulation: 4
-  max_steps: 200
+  max_steps: 4000
   warmup_steps: 100
-  learning_rate: 1e-4
-  scheduler: cosine
+  learning_rate: 2e-4
+  scheduler: none
   optimizer:
     type: adamw
-    use_8bit: true
-  mixed_precision: fp16
-  gradient_checkpointing: true
+    use_8bit: false
+  mixed_precision: bf16
+  gradient_checkpointing: false
   log_every_n_steps: 10
   val_check_interval: 0
 
@@ -66,7 +66,7 @@ output:
     type: local
     path: ./artifacts/lora
   naming:
-    pattern: "{job_id}_{style_name}_v0"
+    pattern: "{job_id}_{style_name}_v1"
   style_name: zstyle
   save:
     lora_weights: true

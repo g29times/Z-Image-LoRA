@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import json
+
 import torch
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
@@ -25,6 +27,17 @@ def _read_caption_for_image(img_path: Path, strategy: str) -> str:
     txt_path = img_path.with_suffix(".txt")
     if txt_path.exists():
         return txt_path.read_text(encoding="utf-8").strip()
+
+    json_path = img_path.with_suffix(".json")
+    if json_path.exists():
+        raw = json.loads(json_path.read_text(encoding="utf-8"))
+        if isinstance(raw, str):
+            return raw.strip()
+        if isinstance(raw, dict):
+            for k in ("caption", "text", "prompt"):
+                v = raw.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
 
     return img_path.stem
 
